@@ -1,0 +1,3 @@
+[submodule "GelbooruViewer"]
+	path = GelbooruViewer
+	url = https://github.com/ArchieMeng/GelbooruViewer.git
