@@ -7,6 +7,7 @@ import pickle
 import atexit
 import signal
 import sys
+import logging
 
 PICTURE_INFO_TEXT = """
 id: {picture_id}
@@ -50,10 +51,15 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     message_id = update.message.message_id
 
     def send_picture(p: GelbooruPicture):
+        logging.info("id: {pic_id} - file_url: {file_url}".format(
+            pic_id=p.picture_id,
+            file_url=(p.file_url, p.source, p.sample_url, p.preview_url)
+        ))
+        url = [ref for ref in (p.file_url, p.source, p.sample_url, p.preview_url) if ref][0]
         bot.send_photo(
             chat_id=chat_id,
             reply_to_message_id=message_id,
-            photo=p.file_url
+            photo=url
         )
 
     def send_picture_info(p: GelbooruPicture):
@@ -121,10 +127,11 @@ def source_id(bot: telegram.Bot, update: telegram.Update, args):
         picture = gelbooru_viewer.get(id=pic_id)
         if picture:
             picture = picture[0]
+            source = picture.source if picture.source else "None"
             bot.send_message(
                 chat_id=chat_id,
                 reply_to_message_id=message_id,
-                text=picture.source
+                text=source
             )
         else:
             bot.send_message(
