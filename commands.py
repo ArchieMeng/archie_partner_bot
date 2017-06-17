@@ -17,6 +17,8 @@ Original url: {file_url}
 rating: {rating}
 """
 PIC_CHAT_DIC_FILE_NAME = 'picture_chat_id.dic'
+
+
 gelbooru_viewer = GelbooruViewer()
 
 try:
@@ -51,18 +53,22 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     chat_id = update.message.chat_id
     message_id = update.message.message_id
 
+    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
+
+    # internal function to send picture to chat
     def send_picture(p: GelbooruPicture):
+        url = p.preview_url
         logging.info("id: {pic_id} - file_url: {file_url}".format(
             pic_id=p.picture_id,
-            file_url=p.sample_url
+            file_url=url
         ))
-        url = p.sample_url
         bot.send_photo(
             chat_id=chat_id,
             reply_to_message_id=message_id,
             photo=url
         )
 
+    # internal function to send info of picture to chat
     def send_picture_info(p: GelbooruPicture):
         bot.send_message(
             chat_id=chat_id,
@@ -77,11 +83,10 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
             disable_web_page_preview=True
         )
 
-    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-
     if args:
         # fetch picture_id = args[0] of it is digits
         if args[0].isdigit():
+            bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
             picture = gelbooru_viewer.get(id=args[0])
             if picture:
                 picture = picture[0]
@@ -96,6 +101,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
                 )
             return
 
+        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         pictures = gelbooru_viewer.get(tags=args)
         if len(pictures) >= 1:
             for pic in pictures:
@@ -105,6 +111,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
                     picture_chat_id_dic[chat_id].add(pic.picture_id)
                     break
             else:
+                bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
                 picture_chat_id_dic[chat_id] = {pictures[0].picture_id}
                 send_picture(pictures[0])
                 send_picture_info(pictures[0])
@@ -115,16 +122,18 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
                 text="Tag: {tags} not found".format(tags=args)
             )
     else:
+        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         picture = gelbooru_viewer.get(limit=1)
         while not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]:
-            picture = gelbooru_viewer.get(id=randint(1, gelbooru_viewer.max_id))
+            picture = gelbooru_viewer.get(id=randint(1, GelbooruViewer.MAX_ID))
+        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         picture = picture[0]
         send_picture(picture)
         send_picture_info(picture)
         picture_chat_id_dic[chat_id].add(picture.picture_id)
 
 
-def source_id(bot: telegram.Bot, update: telegram.Update, args):
+def tag_id(bot: telegram.Bot, update: telegram.Update, args):
     chat_id = update.message.chat_id
     message_id = update.message.message_id
 
@@ -133,11 +142,10 @@ def source_id(bot: telegram.Bot, update: telegram.Update, args):
         picture = gelbooru_viewer.get(id=pic_id)
         if picture:
             picture = picture[0]
-            source = picture.source if picture.source else "None"
             bot.send_message(
                 chat_id=chat_id,
                 reply_to_message_id=message_id,
-                text=source
+                text=", ".join(picture.tags)
             )
         else:
             bot.send_message(
@@ -149,9 +157,8 @@ def source_id(bot: telegram.Bot, update: telegram.Update, args):
         bot.send_message(
             chat_id=chat_id,
             reply_to_message_id=message_id,
-            text="/source <id> to get source url of picture which has id.\n id must be an int"
+            text="/tag <id> to get tags of picture which has id.\n id must be an int"
         )
-
 
 start_handler = CommandHandler(
     command='start',
@@ -164,14 +171,14 @@ taxi_handler = CommandHandler(
     pass_args=True
 )
 
-source_handler = CommandHandler(
-    command='source',
-    callback=source_id,
+tag_handler = CommandHandler(
+    command='tag',
+    callback=tag_id,
     pass_args=True
 )
 COMMAND_HANDLERS = [
     start_handler,
     taxi_handler,
-    source_handler
+    tag_handler
 ]
 i = 1

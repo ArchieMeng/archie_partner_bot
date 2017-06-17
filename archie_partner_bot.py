@@ -18,16 +18,8 @@ dispatcher = updater.dispatcher
 
 def error_callback(bot: telegram.Bot, update: telegram.Update, error: telegram.TelegramError):
     logging.error(
-        msg="An TelegramError occur when processing message:{message}".format(message=update.message.text),
-        error=':'.join([error, error.message])
-    )
-    bot.send_message(
-        chat_id=update.message.chat_id,
-        text="Something wrong happened. Message: \"{message}\" raise {error}".format(
-            message=update.message.text,
-            error=''.join([error, error.message])
-        )
-    )
+        msg="An TelegramError occur when processing message".
+            format(error=':'.join([str(error), str(error.message)])))
 
 for handler in commands.COMMAND_HANDLERS:
     dispatcher.add_handler(handler)
