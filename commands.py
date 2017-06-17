@@ -1,5 +1,6 @@
 import telegram
 from telegram.ext import CommandHandler
+from telegram.ext.dispatcher import run_async
 from GelbooruViewer import GelbooruPicture, GelbooruViewer
 from random import randint
 from collections import defaultdict
@@ -8,6 +9,7 @@ import atexit
 import signal
 import sys
 import logging
+from threading import Lock
 
 PICTURE_INFO_TEXT = """
 id: {picture_id}
@@ -17,6 +19,7 @@ Original url: {file_url}
 rating: {rating}
 """
 PIC_CHAT_DIC_FILE_NAME = 'picture_chat_id.dic'
+pic_chat_dic_lock = Lock()
 
 
 gelbooru_viewer = GelbooruViewer()
@@ -39,6 +42,7 @@ def raise_exit(signum, stack):
 signal.signal(signal.SIGTERM, raise_exit)
 
 
+@run_async
 def hello(bot, update):
     bot.send_message(
         chat_id=update.message.chat_id,
@@ -49,6 +53,7 @@ def hello(bot, update):
     )
 
 
+@run_async
 def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     chat_id = update.message.chat_id
     message_id = update.message.message_id
@@ -92,7 +97,8 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
                 picture = picture[0]
                 send_picture(picture)
                 send_picture_info(picture)
-                picture_chat_id_dic[chat_id].add(picture.picture_id)
+                with pic_chat_dic_lock:
+                    picture_chat_id_dic[chat_id].add(picture.picture_id)
             else:
                 bot.send_message(
                     chat_id=chat_id,
@@ -105,16 +111,18 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         pictures = gelbooru_viewer.get(tags=args)
         if len(pictures) >= 1:
             for pic in pictures:
-                if pic.picture_id not in picture_chat_id_dic[chat_id]:
-                    send_picture(pic)
-                    send_picture_info(pic)
-                    picture_chat_id_dic[chat_id].add(pic.picture_id)
-                    break
+                with pic_chat_dic_lock:
+                    if pic.picture_id not in picture_chat_id_dic[chat_id]:
+                        send_picture(pic)
+                        send_picture_info(pic)
+                        picture_chat_id_dic[chat_id].add(pic.picture_id)
+                        break
             else:
                 bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
-                picture_chat_id_dic[chat_id] = {pictures[0].picture_id}
-                send_picture(pictures[0])
-                send_picture_info(pictures[0])
+                with pic_chat_dic_lock:
+                    picture_chat_id_dic[chat_id] = {pictures[0].picture_id}
+                    send_picture(pictures[0])
+                    send_picture_info(pictures[0])
         else:
             bot.send_message(
                 chat_id=chat_id,
@@ -124,15 +132,21 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     else:
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         picture = gelbooru_viewer.get(limit=1)
-        while not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]:
+        with pic_chat_dic_lock:
+            viewed = not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]
+        while viewed:
             picture = gelbooru_viewer.get(id=randint(1, GelbooruViewer.MAX_ID))
-        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
+            with pic_chat_dic_lock:
+                viewed = not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]
         picture = picture[0]
+        with pic_chat_dic_lock:
+            picture_chat_id_dic[chat_id].add(picture.picture_id)
+        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         send_picture(picture)
         send_picture_info(picture)
-        picture_chat_id_dic[chat_id].add(picture.picture_id)
 
 
+@run_async
 def tag_id(bot: telegram.Bot, update: telegram.Update, args):
     chat_id = update.message.chat_id
     message_id = update.message.message_id

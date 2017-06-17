@@ -14,7 +14,7 @@ logging.basicConfig(
 _token_path = os.path.join(sys.path[0], '_token')
 with open(_token_path, 'r') as rf:
     _token = rf.read()
-updater = Updater(token=_token)
+updater = Updater(token=_token, workers=10)
 dispatcher = updater.dispatcher
 
 
