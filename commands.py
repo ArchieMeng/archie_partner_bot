@@ -12,7 +12,8 @@ import logging
 PICTURE_INFO_TEXT = """
 id: {picture_id}
 size: {width}*{height}
-tags: {tags}
+source: {source}
+Original url: {file_url}
 rating: {rating}
 """
 PIC_CHAT_DIC_FILE_NAME = 'picture_chat_id.dic'
@@ -53,9 +54,9 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     def send_picture(p: GelbooruPicture):
         logging.info("id: {pic_id} - file_url: {file_url}".format(
             pic_id=p.picture_id,
-            file_url=(p.file_url, p.source, p.sample_url, p.preview_url)
+            file_url=p.sample_url
         ))
-        url = [ref for ref in (p.file_url, p.source, p.sample_url, p.preview_url) if ref][0]
+        url = p.sample_url
         bot.send_photo(
             chat_id=chat_id,
             reply_to_message_id=message_id,
@@ -63,13 +64,18 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         )
 
     def send_picture_info(p: GelbooruPicture):
-        bot.send_message(chat_id=chat_id, text=PICTURE_INFO_TEXT.format(
-            picture_id=p.picture_id,
-            width=p.width,
-            height=p.height,
-            tags=' '.join(p.tags),
-            rating=p.rating
-        ))
+        bot.send_message(
+            chat_id=chat_id,
+            text=PICTURE_INFO_TEXT.format(
+                picture_id=p.picture_id,
+                width=p.width,
+                height=p.height,
+                source=p.source,
+                file_url=p.file_url,
+                rating=p.rating
+            ),
+            disable_web_page_preview=True
+        )
 
     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
 
