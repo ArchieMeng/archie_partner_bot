@@ -102,5 +102,9 @@ ENV/
 # mypy
 .mypy_cache/
 
-#token
+# token
 _token
+
+# data
+*.dic
+*.swp
