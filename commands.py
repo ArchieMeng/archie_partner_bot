@@ -181,4 +181,3 @@ COMMAND_HANDLERS = [
     taxi_handler,
     tag_handler
 ]
-i = 1
