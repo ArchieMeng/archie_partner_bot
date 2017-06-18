@@ -70,22 +70,15 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         bot.send_photo(
             chat_id=chat_id,
             reply_to_message_id=message_id,
-            photo=url
-        )
-
-    # internal function to send info of picture to chat
-    def send_picture_info(p: GelbooruPicture):
-        bot.send_message(
-            chat_id=chat_id,
-            text=PICTURE_INFO_TEXT.format(
+            photo=url,
+            caption=PICTURE_INFO_TEXT.format(
                 picture_id=p.picture_id,
                 width=p.width,
                 height=p.height,
                 source=p.source,
                 file_url=p.file_url,
                 rating=p.rating
-            ),
-            disable_web_page_preview=True
+            )
         )
 
     if args:
@@ -96,7 +89,6 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
             if picture:
                 picture = picture[0]
                 send_picture(picture)
-                send_picture_info(picture)
                 with pic_chat_dic_lock:
                     picture_chat_id_dic[chat_id].add(picture.picture_id)
             else:
@@ -110,19 +102,22 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         pictures = gelbooru_viewer.get(tags=args)
         if len(pictures) >= 1:
+            send = False
+            picture = None
             for pic in pictures:
                 with pic_chat_dic_lock:
                     if pic.picture_id not in picture_chat_id_dic[chat_id]:
-                        send_picture(pic)
-                        send_picture_info(pic)
+                        send = True
                         picture_chat_id_dic[chat_id].add(pic.picture_id)
+                        picture = pic
                         break
+            if send:
+                send_picture(picture)
             else:
                 bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
                 with pic_chat_dic_lock:
                     picture_chat_id_dic[chat_id] = {pictures[0].picture_id}
                     send_picture(pictures[0])
-                    send_picture_info(pictures[0])
         else:
             bot.send_message(
                 chat_id=chat_id,
@@ -143,7 +138,6 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
             picture_chat_id_dic[chat_id].add(picture.picture_id)
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         send_picture(picture)
-        send_picture_info(picture)
 
 
 @run_async
