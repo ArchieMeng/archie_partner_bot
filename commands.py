@@ -133,28 +133,33 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
                     text="id: {picture_id} not found".format(picture_id=args[0])
                 )
             return
-
-        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-        pictures = gelbooru_viewer.get(tags=args)
-        if len(pictures) >= 1:
-            for pic in pictures:
-                with pic_chat_dic_lock:
-                    if pic.picture_id not in picture_chat_id_dic[chat_id]:
-                        send_picture(pic)
-                        picture_chat_id_dic[chat_id].add(pic.picture_id)
-                        break
-            else:
-                bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
-                with pic_chat_dic_lock:
-                    picture_chat_id_dic[chat_id] = {pictures[0].picture_id}
-                    send_picture(pictures[0])
+        # fetch picture_tags = args
         else:
-            bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=message_id,
-                text="Tag: {tags} not found".format(tags=args)
-            )
+            bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
+            pictures = gelbooru_viewer.get_all(tags=args, num=500)
+            if len(pictures) >= 1:
+                send = False
+                for pic in pictures:
+                    with pic_chat_dic_lock:
+                        if pic.picture_id not in picture_chat_id_dic[chat_id]:
+                            picture_chat_id_dic[chat_id].add(pic.picture_id)
+                            send = True
+                    if send:
+                        send_picture(pic)
+                        break
+                else:
+                    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
+                    with pic_chat_dic_lock:
+                        picture_chat_id_dic[chat_id] = {pictures[0].picture_id}
+                        send_picture(pictures[0])
+            else:
+                bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=message_id,
+                    text="Tag: {tags} not found".format(tags=args)
+                )
     else:
+        # send random picture
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         picture = gelbooru_viewer.get(limit=1)
         pic_id = GelbooruViewer.MAX_ID
