@@ -2,7 +2,7 @@ import telegram
 from telegram.ext import CommandHandler
 from telegram.ext.dispatcher import run_async
 from GelbooruViewer import GelbooruPicture, GelbooruViewer
-from random import randint
+from random import randint, seed
 from collections import defaultdict
 import pickle
 import atexit
@@ -10,7 +10,9 @@ import signal
 import sys
 import logging
 from threading import Lock
+from time import time
 
+# Constants
 PICTURE_INFO_TEXT = """
 id: {picture_id}
 size: {width}*{height}
@@ -19,16 +21,19 @@ Original url: {file_url}
 rating: {rating}
 """
 PIC_CHAT_DIC_FILE_NAME = 'picture_chat_id.dic'
+COMMAND_HANDLERS = [] # list of command_handlers
+
+# global variables
 pic_chat_dic_lock = Lock()
-
-
 gelbooru_viewer = GelbooruViewer()
 
+# start up function
 try:
     with open(PIC_CHAT_DIC_FILE_NAME, 'rb') as fp:
         picture_chat_id_dic = pickle.load(fp)
 except FileNotFoundError:
     picture_chat_id_dic = defaultdict(set)
+seed(time())
 
 
 @atexit.register
@@ -42,6 +47,35 @@ def raise_exit(signum, stack):
 signal.signal(signal.SIGTERM, raise_exit)
 
 
+def set_command_handler(
+        command,
+        filters=None,
+        allow_edited=False,
+        pass_args=False,
+        pass_update_queue=False,
+        pass_job_queue=False,
+        pass_user_data=False,
+        pass_chat_data=False
+):
+    def decorate(func):
+        COMMAND_HANDLERS.append(
+            CommandHandler(
+                command=command,
+                callback=func,
+                filters=filters,
+                allow_edited=allow_edited,
+                pass_args=pass_args,
+                pass_update_queue=pass_update_queue,
+                pass_job_queue=pass_job_queue,
+                pass_user_data=pass_user_data,
+                pass_chat_data=pass_chat_data
+            )
+        )
+        return func
+    return decorate
+
+
+@set_command_handler('start')
 @run_async
 def hello(bot, update):
     bot.send_message(
@@ -53,6 +87,7 @@ def hello(bot, update):
     )
 
 
+@set_command_handler('taxi', pass_args=True)
 @run_async
 def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     chat_id = update.message.chat_id
@@ -62,7 +97,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
 
     # internal function to send picture to chat
     def send_picture(p: GelbooruPicture):
-        url = p.preview_url
+        url = p.sample_url
         logging.info("id: {pic_id} - file_url: {file_url}".format(
             pic_id=p.picture_id,
             file_url=url
@@ -102,17 +137,12 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         pictures = gelbooru_viewer.get(tags=args)
         if len(pictures) >= 1:
-            send = False
-            picture = None
             for pic in pictures:
                 with pic_chat_dic_lock:
                     if pic.picture_id not in picture_chat_id_dic[chat_id]:
-                        send = True
+                        send_picture(pic)
                         picture_chat_id_dic[chat_id].add(pic.picture_id)
-                        picture = pic
                         break
-            if send:
-                send_picture(picture)
             else:
                 bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
                 with pic_chat_dic_lock:
@@ -127,12 +157,26 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     else:
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         picture = gelbooru_viewer.get(limit=1)
+        pic_id = GelbooruViewer.MAX_ID
         with pic_chat_dic_lock:
-            viewed = not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]
-        while viewed:
-            picture = gelbooru_viewer.get(id=randint(1, GelbooruViewer.MAX_ID))
+            invalid_or_viewed = not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]
+        while invalid_or_viewed:
+            # get a not viewed picture id by offline method
+            viewed = True
+            while viewed:
+                pic_id = randint(1, GelbooruViewer.MAX_ID)
+                with pic_chat_dic_lock:
+                    viewed = pic_id in picture_chat_id_dic[chat_id]
+            # add the pic_id into dictionary.
+            #  If this section is reached that means pic_id not viewed, so just test validation
             with pic_chat_dic_lock:
-                viewed = not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]
+                # in case other thread sent this picture before this thread GET it
+                if pic_id in picture_chat_id_dic[chat_id]:
+                    continue
+                else:
+                    picture_chat_id_dic[chat_id].add(pic_id)
+            picture = gelbooru_viewer.get(id=pic_id)
+            invalid_or_viewed = not picture
         picture = picture[0]
         with pic_chat_dic_lock:
             picture_chat_id_dic[chat_id].add(picture.picture_id)
@@ -140,11 +184,16 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         send_picture(picture)
 
 
+@set_command_handler('tag', pass_args=True)
 @run_async
 def tag_id(bot: telegram.Bot, update: telegram.Update, args):
     chat_id = update.message.chat_id
     message_id = update.message.message_id
 
+    bot.send_chat_action(
+        chat_id=chat_id,
+        action=telegram.ChatAction.TYPING
+    )
     if args and args[0].isdigit():
         pic_id = args[0]
         picture = gelbooru_viewer.get(id=pic_id)
@@ -168,24 +217,3 @@ def tag_id(bot: telegram.Bot, update: telegram.Update, args):
             text="/tag <id> to get tags of picture which has id.\n id must be an int"
         )
 
-start_handler = CommandHandler(
-    command='start',
-    callback=hello
-)
-
-taxi_handler = CommandHandler(
-    command='taxi',
-    callback=send_gelbooru_images,
-    pass_args=True
-)
-
-tag_handler = CommandHandler(
-    command='tag',
-    callback=tag_id,
-    pass_args=True
-)
-COMMAND_HANDLERS = [
-    start_handler,
-    taxi_handler,
-    tag_handler
-]
