@@ -8,7 +8,7 @@ These instructions will get you a copy of the Archie Partner Bot and running on 
 
 ### Prerequisites
 
-1. Ask @BotFather for token to develop your bot on Telegram. 
+1. Ask @BotFather for token to develop your bot on Telegram. And then, save token into a file named _token
 2. install Python module [lru-dict](https://github.com/amitdev/lru-dict) which is required by submodule: GelbooruViewer.
 3. upgrade Python to 3.5+
 
