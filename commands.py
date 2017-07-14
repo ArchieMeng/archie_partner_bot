@@ -87,6 +87,116 @@ def hello(bot, update):
     )
 
 
+@set_command_handler('img', pass_args=True)
+@run_async
+def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
+    chat_id = update.message.chat_id
+    message_id = update.message.message_id
+    h_rating = {'e', 'q'}
+
+    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
+
+    # internal function to send picture to chat
+    def send_picture(p: GelbooruPicture):
+        url = p.sample_url
+        logging.info("id: {pic_id} - file_url: {file_url}".format(
+            pic_id=p.picture_id,
+            file_url=url
+        ))
+        bot.send_photo(
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            photo=url,
+            caption=PICTURE_INFO_TEXT.format(
+                picture_id=p.picture_id,
+                width=p.width,
+                height=p.height,
+                source=p.source,
+                file_url=p.file_url,
+                rating=p.rating
+            )
+        )
+
+    if args:
+        # fetch picture_id = args[0] of it is digits
+        if args[0].isdigit():
+            bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
+            picture = gelbooru_viewer.get(id=args[0])
+            if picture:
+                picture = picture[0]
+                send_picture(picture)
+                with pic_chat_dic_lock:
+                    picture_chat_id_dic[chat_id].add(picture.picture_id)
+            else:
+                bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=message_id,
+                    text="id: {picture_id} not found".format(picture_id=args[0])
+                )
+            return
+        # fetch picture_tags = args
+        else:
+            bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
+            pictures = gelbooru_viewer.get_all(tags=args, num=500)
+            if len(pictures) >= 1:
+                send = False
+                for pic in pictures:
+                    with pic_chat_dic_lock:
+                        if pic.picture_id not in picture_chat_id_dic[chat_id]:
+                            if pic.rating not in h_rating:
+                                picture_chat_id_dic[chat_id].add(pic.picture_id)
+                                send = True
+                    if send:
+                        send_picture(pic)
+                        return
+                else:
+                    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
+                    for pic in pictures:
+                        if pic.rating not in h_rating:
+                            picture_chat_id_dic[chat_id] = {pic.picture_id}
+                            send_picture(pic)
+                            return
+            else:
+                bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=message_id,
+                    text="Tag: {tags} not found".format(tags=args)
+                )
+    else:
+        # send random picture
+        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
+        picture = gelbooru_viewer.get(limit=1)
+        pic_id = GelbooruViewer.MAX_ID
+        with pic_chat_dic_lock:
+            invalid_or_viewed = not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]
+        while invalid_or_viewed:
+            # get a not viewed picture id by offline method
+            viewed = True
+            while viewed:
+                pic_id = randint(1, GelbooruViewer.MAX_ID)
+                with pic_chat_dic_lock:
+                    viewed = pic_id in picture_chat_id_dic[chat_id]
+            # add the pic_id into dictionary.
+            #  If this section is reached that means pic_id not viewed, so just test validation
+            with pic_chat_dic_lock:
+                # in case other thread sent this picture before this thread GET it
+                if pic_id in picture_chat_id_dic[chat_id]:
+                    continue
+                else:
+                    picture_chat_id_dic[chat_id].add(pic_id)
+            picture = gelbooru_viewer.get(id=pic_id)
+            # for we have judged viewed before, we can only judge valid here
+            invalid_or_viewed = not picture or picture[0].rating in h_rating
+            if picture and picture[0].rating in h_rating:
+                with pic_chat_dic_lock:
+                    picture_chat_id_dic[chat_id].remove(pic_id)
+        picture = picture[0]
+        with pic_chat_dic_lock:
+            picture_chat_id_dic[chat_id].add(picture.picture_id)
+        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
+        send_picture(picture)
+
+
 @set_command_handler('taxi', pass_args=True)
 @run_async
 def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
