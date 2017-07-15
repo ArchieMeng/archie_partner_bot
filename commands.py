@@ -168,7 +168,9 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
         picture = gelbooru_viewer.get(limit=1)
         pic_id = GelbooruViewer.MAX_ID
         with pic_chat_dic_lock:
-            invalid_or_viewed = not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]
+            invalid_or_viewed = not picture\
+                                or picture[0].rating in h_rating \
+                                or picture[0].picture_id in picture_chat_id_dic[chat_id]
         while invalid_or_viewed:
             # get a not viewed picture id by offline method
             viewed = True
