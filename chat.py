@@ -2,6 +2,8 @@ import telegram
 from telegram.ext import MessageHandler
 from telegram.ext.dispatcher import run_async
 import filters
+from telegram.ext.filters import Filters
+from pickle import dump
 
 MESSAGE_HANDLERS = []
 
@@ -44,7 +46,12 @@ def echo(bot: telegram.bot.Bot, update: telegram.Update):
         text=update.message.text
     )
 
-echo_handler = MessageHandler(filters.test, echo)
-MESSAGE_HANDLERS.append(echo_handler)
 
-
+@set_message_handler(set_filters=Filters.text)
+@run_async
+def record(bot: telegram.bot.Bot, update: telegram.Update):
+    # just record message
+    chat_id = update.message.chat_id
+    # record messages using pickle
+    with open("message_of_{}".format(chat_id), "a+b") as record_file:
+        dump(update.message, record_file)
