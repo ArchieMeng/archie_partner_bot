@@ -1,3 +1,4 @@
+import os
 import telegram
 from telegram.ext import CommandHandler
 from telegram.ext.dispatcher import run_async
@@ -20,6 +21,7 @@ source: {source}
 Original url: {file_url}
 rating: {rating}
 """
+file_path = os.path.dirname(__file__)
 PIC_CHAT_DIC_FILE_NAME = 'picture_chat_id.dic'
 COMMAND_HANDLERS = [] # list of command_handlers
 
@@ -29,7 +31,7 @@ gelbooru_viewer = GelbooruViewer()
 
 # start up function
 try:
-    with open(PIC_CHAT_DIC_FILE_NAME, 'rb') as fp:
+    with open(file_path + '/' + PIC_CHAT_DIC_FILE_NAME, 'rb') as fp:
         picture_chat_id_dic = pickle.load(fp)
 except FileNotFoundError:
     picture_chat_id_dic = defaultdict(set)
@@ -38,7 +40,7 @@ seed(time())
 
 @atexit.register
 def save_pic_chat_dic():
-    with open(PIC_CHAT_DIC_FILE_NAME, 'wb') as fp:
+    with open(file_path + '/' + PIC_CHAT_DIC_FILE_NAME, 'wb') as fp:
         pickle.dump(picture_chat_id_dic, fp, protocol=2)
 
 
@@ -137,7 +139,7 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
         # fetch picture_tags = args
         else:
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-            pictures = gelbooru_viewer.get_all(tags=args, num=1000)
+            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10)
             if pictures:
                 send = False
                 for pic in pictures:
@@ -248,7 +250,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         # fetch picture_tags = args
         else:
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-            pictures = gelbooru_viewer.get_all(tags=args, num=1000)
+            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10)
             if pictures:
                 send = False
                 for pic in pictures:

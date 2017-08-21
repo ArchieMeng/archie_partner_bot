@@ -7,13 +7,14 @@ import os
 import sys
 import logging
 
+file_path = os.path.dirname(__file__)
 logging.basicConfig(
-    filename="bot.log",
+    filename=file_path + '/' + "bot.log",
     format="%(asctime)s-%(name)s-%(levelname)s-%(message)s",
     level=logging.ERROR
 )
 
-_token_path = os.path.join(sys.path[0], '_token')
+_token_path = os.path.join(file_path, '_token')
 with open(_token_path, 'r') as rf:
     _token = rf.read()
 updater = Updater(token=_token, workers=16)
