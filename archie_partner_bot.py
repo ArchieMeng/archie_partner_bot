@@ -9,7 +9,7 @@ import logging
 
 file_path = os.path.dirname(__file__)
 logging.basicConfig(
-    filename=file_path + '/' + "bot.log",
+    filename=file_path + "bot.log",
     format="%(asctime)s-%(name)s-%(levelname)s-%(message)s",
     level=logging.ERROR
 )

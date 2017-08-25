@@ -139,7 +139,7 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
         # fetch picture_tags = args
         else:
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10)
+            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10, thread_limit=2)
             if pictures:
                 send = False
                 for pic in pictures:
@@ -250,7 +250,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         # fetch picture_tags = args
         else:
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10)
+            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10, thread_limit=2)
             if pictures:
                 send = False
                 for pic in pictures:
