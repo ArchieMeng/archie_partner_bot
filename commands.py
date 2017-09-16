@@ -2,6 +2,7 @@ import os
 import telegram
 from telegram.ext import CommandHandler
 from telegram.ext.dispatcher import run_async
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from GelbooruViewer import GelbooruPicture, GelbooruViewer
 from random import randint, seed
 from collections import defaultdict
@@ -12,6 +13,9 @@ import sys
 import logging
 from threading import Lock
 from time import time
+from requests import get
+from concurrent.futures import ThreadPoolExecutor
+from recycle_cache import RecycleCache
 
 # Constants
 PICTURE_INFO_TEXT = """
@@ -21,8 +25,17 @@ source: {source}
 Original url: {file_url}
 rating: {rating}
 """
+PIC_FORMAT_HTML = """
+<a href="https://gelbooru.com/index.php?page=post&s=view&id={picture_id}">{picture_id}</a>
+<a>size: {width} * {height}</a>
+<a href="{file_url}">original</a>
+<a href="{source}">source</a>
+<strong>rating:{rating}</strong>
+"""
+
 file_path = os.path.dirname(__file__)
 PIC_CHAT_DIC_FILE_NAME = 'picture_chat_id.dic'
+SHORT_URL_ADDR = "localhost:1234"
 COMMAND_HANDLERS = [] # list of command_handlers
 
 # global variables
@@ -36,6 +49,8 @@ try:
 except FileNotFoundError:
     picture_chat_id_dic = defaultdict(set)
 seed(time())
+recent_cache_size = 6
+recent_picture_id_caches = defaultdict(lambda: RecycleCache(recent_cache_size))
 
 
 @atexit.register
@@ -46,7 +61,102 @@ def save_pic_chat_dic():
 
 def raise_exit(signum, stack):
     sys.exit(-1)
+
+
 signal.signal(signal.SIGTERM, raise_exit)
+
+
+def url2short(url: str):
+    """
+    use custom short url service to shorten url.If not success, url will not be modified
+
+    :param url: url to shorten
+
+    :return: short_url
+    """
+    if url:
+        try:
+            req = get(
+                "http://{}/shorten/".format(SHORT_URL_ADDR),
+                params={
+                    "url": url
+                }
+            )
+            if req.status_code != 200:
+                return url
+            else:
+                short_url = req.text
+                return short_url
+        except Exception as e:
+            print(type(e), e)
+    return url
+
+
+def send_picture(
+        bot: telegram.bot.Bot,
+        chat_id,
+        message_id,
+        p: GelbooruPicture,
+        use_short_url=True
+):
+    """
+    Used to send Gelbooru picture
+
+    :param bot: Telegrambot object
+
+    :param chat_id: id of chat channel
+
+    :param message_id: id of incoming message
+
+    :param p: Gelbooru picture object
+
+    :param use_short_url: Whether using short url for images. Default True.
+
+    :return: None
+    """
+    url = p.sample_url
+    logging.info("id: {pic_id} - file_url: {file_url}".format(
+        pic_id=p.picture_id,
+        file_url=url
+    ))
+    # bot.send_message(
+    #     chat_id=chat_id,
+    #     reply_to_message_id=message_id,
+    #     text=PIC_FORMAT_HTML.format(
+    #         preview_url=url,
+    #         picture_id=p.picture_id,
+    #         width=p.width,
+    #         height=p.height,
+    #         source=p.source,
+    #         file_url=p.file_url,
+    #         rating=p.rating
+    #     ),
+    #     parse_mode=telegram.ParseMode.HTML
+    # )
+    if use_short_url:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            source_url = executor.submit(url2short, p.source)
+            file_url = executor.submit(url2short, p.file_url)
+            source_url = source_url.result()
+            file_url = file_url.result()
+    else:
+        source_url, file_url = p.source, p.file_url
+    
+    recent_picture_id_caches[chat_id].add(p.picture_id)
+    bot.send_photo(
+        chat_id=chat_id,
+        reply_to_message_id=message_id,
+        photo=url,
+        caption=PICTURE_INFO_TEXT.format(
+            picture_id=p.picture_id,
+            width=p.width,
+            height=p.height,
+            source=source_url,
+            file_url=file_url,
+            rating=p.rating
+        ),
+        reply_markup=ReplyKeyboardRemove()
+    )
 
 
 def set_command_handler(
@@ -77,6 +187,33 @@ def set_command_handler(
     return decorate
 
 
+def send_tags_info(bot: telegram.bot.Bot, update: telegram.Update, pic_id):
+    message_id = update.message.message_id
+    chat_id = update.message.chat_id
+
+    picture = gelbooru_viewer.get(id=pic_id)
+    if picture:
+        picture = picture[0]
+        buttons = [KeyboardButton("/taxi {}".format(tag)) for tag in picture.tags]
+        reply_markup = ReplyKeyboardMarkup(
+            [buttons[i:i + 4] for i in range(0, len(buttons), 4)],
+            one_time_keyboard=True,
+            resize_keyboard=True
+        )
+        bot.send_message(
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            text=", ".join(picture.tags),
+            reply_markup=reply_markup
+        )
+    else:
+        bot.send_message(
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            text="id: {pic_id} not found".format(pic_id=pic_id)
+        )
+
+
 @set_command_handler('start')
 @run_async
 def hello(bot, update):
@@ -98,27 +235,6 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
 
     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
-    # internal function to send picture to chat
-    def send_picture(p: GelbooruPicture):
-        url = p.sample_url
-        logging.info("id: {pic_id} - file_url: {file_url}".format(
-            pic_id=p.picture_id,
-            file_url=url
-        ))
-        bot.send_photo(
-            chat_id=chat_id,
-            reply_to_message_id=message_id,
-            photo=url,
-            caption=PICTURE_INFO_TEXT.format(
-                picture_id=p.picture_id,
-                width=p.width,
-                height=p.height,
-                source=p.source,
-                file_url=p.file_url,
-                rating=p.rating
-            )
-        )
-
     if args:
         # fetch picture_id = args[0] of it is digits
         if args[0].isdigit():
@@ -126,7 +242,7 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
             picture = gelbooru_viewer.get(id=args[0])
             if picture:
                 picture = picture[0]
-                send_picture(picture)
+                send_picture(bot, chat_id, message_id, picture)
                 with pic_chat_dic_lock:
                     picture_chat_id_dic[chat_id].add(picture.picture_id)
             else:
@@ -149,14 +265,14 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
                                 picture_chat_id_dic[chat_id].add(pic.picture_id)
                                 send = True
                     if send:
-                        send_picture(pic)
+                        send_picture(bot, chat_id, message_id, pic)
                         return
                 else:
                     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
                     for pic in pictures:
                         if pic.rating not in h_rating:
                             picture_chat_id_dic[chat_id] = {pic.picture_id}
-                            send_picture(pic)
+                            send_picture(bot, chat_id, message_id, pic)
                             return
             else:
                 bot.send_message(
@@ -198,7 +314,7 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
         with pic_chat_dic_lock:
             picture_chat_id_dic[chat_id].add(picture.picture_id)
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-        send_picture(picture)
+        send_picture(bot, chat_id, message_id, picture)
 
 
 @set_command_handler('taxi', pass_args=True)
@@ -208,27 +324,15 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     message_id = update.message.message_id
 
     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
-
-    # internal function to send picture to chat
-    def send_picture(p: GelbooruPicture):
-        url = p.sample_url
-        logging.info("id: {pic_id} - file_url: {file_url}".format(
-            pic_id=p.picture_id,
-            file_url=url
-        ))
-        bot.send_photo(
-            chat_id=chat_id,
-            reply_to_message_id=message_id,
-            photo=url,
-            caption=PICTURE_INFO_TEXT.format(
-                picture_id=p.picture_id,
-                width=p.width,
-                height=p.height,
-                source=p.source,
-                file_url=p.file_url,
-                rating=p.rating
+    if isinstance(update.message.chat, telegram.Chat):
+        chat = update.message.chat
+        if chat.type != telegram.Chat.PRIVATE:
+            bot.send_message(
+                chat_id=chat_id,
+                reply_to_message_id=message_id,
+                text="Only available in private chat."
             )
-        )
+            return
 
     if args:
         # fetch picture_id = args[0] of it is digits
@@ -237,7 +341,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
             picture = gelbooru_viewer.get(id=args[0])
             if picture:
                 picture = picture[0]
-                send_picture(picture)
+                send_picture(bot, chat_id, message_id, picture)
                 with pic_chat_dic_lock:
                     picture_chat_id_dic[chat_id].add(picture.picture_id)
             else:
@@ -259,13 +363,13 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
                             picture_chat_id_dic[chat_id].add(pic.picture_id)
                             send = True
                     if send:
-                        send_picture(pic)
+                        send_picture(bot, chat_id, message_id, pic)
                         break
                 else:
                     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
                     with pic_chat_dic_lock:
                         picture_chat_id_dic[chat_id] = {pictures[0].picture_id}
-                        send_picture(pictures[0])
+                        send_picture(bot, chat_id, message_id, pictures[0])
             else:
                 bot.send_message(
                     chat_id=chat_id,
@@ -300,7 +404,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         with pic_chat_dic_lock:
             picture_chat_id_dic[chat_id].add(picture.picture_id)
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-        send_picture(picture)
+        send_picture(bot, chat_id, message_id, picture)
 
 
 @set_command_handler('tag', pass_args=True)
@@ -315,24 +419,18 @@ def tag_id(bot: telegram.Bot, update: telegram.Update, args):
     )
     if args and args[0].isdigit():
         pic_id = args[0]
-        picture = gelbooru_viewer.get(id=pic_id)
-        if picture:
-            picture = picture[0]
-            bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=message_id,
-                text=", ".join(picture.tags)
-            )
-        else:
-            bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=message_id,
-                text="id: {pic_id} not found".format(pic_id=pic_id)
-            )
+        send_tags_info(bot, update, pic_id)
     else:
+        buttons = [KeyboardButton(pic_id) for pic_id in recent_picture_id_caches[chat_id]]
+        reply_markups = ReplyKeyboardMarkup(
+            [buttons[i:i+3] for i in range(0, len(buttons), 3)],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
         bot.send_message(
             chat_id=chat_id,
             reply_to_message_id=message_id,
-            text="/tag <id> to get tags of picture which has id.\n id must be an int"
+            text="/tag <id> to get tags of picture which has id.\nOr select recently viewed pictures' id below",
+            reply_markup=reply_markups
         )
 

@@ -4,6 +4,7 @@ from telegram.ext.dispatcher import run_async
 import filters
 from telegram.ext.filters import Filters
 from pickle import dump
+from commands import send_tags_info
 
 MESSAGE_HANDLERS = []
 
@@ -50,6 +51,10 @@ def echo(bot: telegram.bot.Bot, update: telegram.Update):
 @set_message_handler(set_filters=Filters.text)
 @run_async
 def record(bot: telegram.bot.Bot, update: telegram.Update):
+    # handle tags requests
+    if update.message.text.isdigit():
+        send_tags_info(bot, update, update.message.text)
+
     # just record message
     chat_id = update.message.chat_id
     # record messages using pickle
