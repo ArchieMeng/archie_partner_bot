@@ -354,7 +354,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         # fetch picture_tags = args
         else:
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10, thread_limit=2)
+            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10, thread_limit=1)
             if pictures:
                 send = False
                 for pic in pictures:
@@ -366,10 +366,13 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
                         send_picture(bot, chat_id, message_id, pic)
                         break
                 else:
-                    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
-                    with pic_chat_dic_lock:
-                        picture_chat_id_dic[chat_id] = {pictures[0].picture_id}
-                        send_picture(bot, chat_id, message_id, pictures[0])
+                    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
+                    # fix bug for generator pictures
+                    for picture in pictures:
+                        with pic_chat_dic_lock:
+                            picture_chat_id_dic[chat_id] = {picture.picture_id}
+                            send_picture(bot, chat_id, message_id, picture)
+                            break
             else:
                 bot.send_message(
                     chat_id=chat_id,
