@@ -66,6 +66,15 @@ def raise_exit(signum, stack):
 signal.signal(signal.SIGTERM, raise_exit)
 
 
+def is_public_chat(update: telegram.Update):
+    if isinstance(update.message.chat, telegram.Chat):
+        chat = update.message.chat
+        return chat.type != telegram.Chat.PRIVATE
+    else:
+        print(update.message.chat)
+        return True
+
+
 def url2short(url: str):
     """
     use custom short url service to shorten url.If not success, url will not be modified
@@ -193,10 +202,16 @@ def send_tags_info(bot: telegram.bot.Bot, update: telegram.Update, pic_id):
 
     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
     picture = gelbooru_viewer.get(id=pic_id)
+
+    if is_public_chat(update):
+        fetch_method = '/img'
+    else:
+        fetch_method = '/taxi'
+
     if picture:
         col = 3
         picture = picture[0]
-        buttons = [KeyboardButton("/taxi {}".format(tag)) for tag in picture.tags]
+        buttons = [KeyboardButton("{} {}".format(fetch_method, tag)) for tag in picture.tags]
         reply_markup = ReplyKeyboardMarkup(
             [buttons[i:i + col] for i in range(0, len(buttons), col)],
             one_time_keyboard=True,
@@ -326,15 +341,13 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     message_id = update.message.message_id
 
     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
-    if isinstance(update.message.chat, telegram.Chat):
-        chat = update.message.chat
-        if chat.type != telegram.Chat.PRIVATE:
-            bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=message_id,
-                text="Only available in private chat."
-            )
-            return
+    if is_public_chat(update):
+        bot.send_message(
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            text="Only available in private chat."
+        )
+        return
 
     if args:
         # fetch picture_id = args[0] of it is digits
