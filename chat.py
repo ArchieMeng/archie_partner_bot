@@ -51,10 +51,9 @@ def echo(bot: telegram.bot.Bot, update: telegram.Update):
 @set_message_handler(set_filters=Filters.text)
 @run_async
 def record(bot: telegram.bot.Bot, update: telegram.Update):
-    # handle tags requests
-    if update.message.text.isdigit():
-        send_tags_info(bot, update, update.message.text)
-
+    text = update.message.text
+    if text.startswith("id:") and text[3:].strip().isdigit():
+        send_tags_info(bot, update, text[3:])
     # just record message
     chat_id = update.message.chat_id
     # record messages using pickle

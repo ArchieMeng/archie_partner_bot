@@ -191,12 +191,14 @@ def send_tags_info(bot: telegram.bot.Bot, update: telegram.Update, pic_id):
     message_id = update.message.message_id
     chat_id = update.message.chat_id
 
+    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
     picture = gelbooru_viewer.get(id=pic_id)
     if picture:
+        col = 3
         picture = picture[0]
         buttons = [KeyboardButton("/taxi {}".format(tag)) for tag in picture.tags]
         reply_markup = ReplyKeyboardMarkup(
-            [buttons[i:i + 4] for i in range(0, len(buttons), 4)],
+            [buttons[i:i + col] for i in range(0, len(buttons), col)],
             one_time_keyboard=True,
             resize_keyboard=True
         )
@@ -424,7 +426,7 @@ def tag_id(bot: telegram.Bot, update: telegram.Update, args):
         pic_id = args[0]
         send_tags_info(bot, update, pic_id)
     else:
-        buttons = [KeyboardButton(pic_id) for pic_id in recent_picture_id_caches[chat_id]]
+        buttons = [KeyboardButton("id:" + str(pic_id)) for pic_id in recent_picture_id_caches[chat_id]]
         reply_markups = ReplyKeyboardMarkup(
             [buttons[i:i+3] for i in range(0, len(buttons), 3)],
             resize_keyboard=True,
