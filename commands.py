@@ -10,8 +10,10 @@ import pickle
 import atexit
 import signal
 import sys
+import re
 import logging
 from threading import Lock
+from io import BytesIO
 from time import time
 from requests import get
 from concurrent.futures import ThreadPoolExecutor
@@ -101,6 +103,29 @@ def url2short(url: str):
     return url
 
 
+def get_img(url: str):
+    """
+    get image io object of url
+    :param url: url of image
+    :return:
+    """
+    file_name = url.split('/')[-1]
+    response = get(
+        url,
+        headers= {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US',
+            'User-Agent': 'Mozilla/5.0 GelbooruViewer/1.0 (+https://github.com/ArchieMeng/GelbooruViewer)'
+        }
+    )
+    if response.status_code == 200 or response.status_code == 304:
+        img_io = BytesIO(response.content)
+        img_io.name = file_name
+        return img_io
+    else:
+        return None
+
+
 def send_picture(
         bot: telegram.bot.Bot,
         chat_id,
@@ -123,11 +148,14 @@ def send_picture(
 
     :return: None
     """
-    url = p.sample_url
+
+    # use regular expression in case of wrong url format
+    url = re.findall(r'((http|https)://.*)', p.sample_url)[0][0]
     logging.info("id: {pic_id} - file_url: {file_url}".format(
         pic_id=p.picture_id,
         file_url=url
     ))
+
     # bot.send_message(
     #     chat_id=chat_id,
     #     reply_to_message_id=message_id,
@@ -155,6 +183,7 @@ def send_picture(
     bot.send_photo(
         chat_id=chat_id,
         reply_to_message_id=message_id,
+        # photo=get_img(url),
         photo=url,
         caption=PICTURE_INFO_TEXT.format(
             picture_id=p.picture_id,
