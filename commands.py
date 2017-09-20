@@ -26,6 +26,7 @@ size: {width}*{height}
 source: {source}
 Original url: {file_url}
 rating: {rating}
+view page:{view_url}
 """
 PIC_FORMAT_HTML = """
 <a href="https://gelbooru.com/index.php?page=post&s=view&id={picture_id}">{picture_id}</a>
@@ -148,9 +149,11 @@ def send_picture(
 
     :return: None
     """
-
+    def get_correct_url(url: str):
+        return re.findall(r'((http|https)://.*)', url)[0][0]
     # use regular expression in case of wrong url format
-    url = re.findall(r'((http|https)://.*)', p.sample_url)[0][0]
+    url = get_correct_url(p.sample_url)
+
     logging.info("id: {pic_id} - file_url: {file_url}".format(
         pic_id=p.picture_id,
         file_url=url
@@ -172,12 +175,22 @@ def send_picture(
     # )
     if use_short_url:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            source_url = executor.submit(url2short, p.source)
-            file_url = executor.submit(url2short, p.file_url)
+            view_url = executor.submit(
+                url2short,
+                get_correct_url('https://gelbooru.com/index.php?page=post&s=view&id=' + str(p.picture_id))
+            )
+            source_url = executor.submit(url2short, get_correct_url(p.source))
+            file_url = executor.submit(url2short, get_correct_url(p.file_url))
             source_url = source_url.result()
             file_url = file_url.result()
+            view_url = view_url.result()
     else:
-        source_url, file_url = p.source, p.file_url
+        source_url, \
+        file_url, \
+        view_url = \
+            p.source, \
+            p.file_url, \
+            'https://gelbooru.com/index.php?page=post&s=view&id=' + str(p.picture_id)
     
     recent_picture_id_caches[chat_id].add(p.picture_id)
     bot.send_photo(
@@ -187,6 +200,7 @@ def send_picture(
         photo=url,
         caption=PICTURE_INFO_TEXT.format(
             picture_id=p.picture_id,
+            view_url=view_url,
             width=p.width,
             height=p.height,
             source=source_url,
