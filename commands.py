@@ -3,6 +3,7 @@ import telegram
 from telegram.ext import CommandHandler
 from telegram.ext.dispatcher import run_async
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+from lru import LRU
 from GelbooruViewer import GelbooruPicture, GelbooruViewer
 from random import randint, seed
 from collections import defaultdict
@@ -38,28 +39,70 @@ PIC_FORMAT_HTML = """
 
 file_path = os.path.dirname(__file__)
 PIC_CHAT_DIC_FILE_NAME = 'picture_chat_id.dic'
+RECENT_ID_FILE_NAME = 'recent_id_cache.pickle'
+PIC_CACHE_FILE_NAME = 'picture_cache.pickle'
 SHORT_URL_ADDR = "localhost:1234"
 COMMAND_HANDLERS = [] # list of command_handlers
 
 # global variables
+recent_cache_size = 6
 pic_chat_dic_lock = Lock()
 gelbooru_viewer = GelbooruViewer()
-
-# start up function
-try:
-    with open(file_path + '/' + PIC_CHAT_DIC_FILE_NAME, 'rb') as fp:
-        picture_chat_id_dic = pickle.load(fp)
-except FileNotFoundError:
-    picture_chat_id_dic = defaultdict(set)
-seed(time())
-recent_cache_size = 6
+picture_chat_id_dic = defaultdict(set)
+send_lock = Lock()
 recent_picture_id_caches = defaultdict(lambda: RecycleCache(recent_cache_size))
+gelbooru_viewer.cache = LRU(gelbooru_viewer.MAX_CACHE_SIZE)
+
+
+def load_data():
+    """
+    load previous global data
+    :return: None
+    """
+    global picture_chat_id_dic
+    global recent_picture_id_caches
+
+    try:
+        with open(file_path + '/' + PIC_CHAT_DIC_FILE_NAME, 'rb') as fp:
+            picture_chat_id_dic = pickle.load(fp)
+    except FileNotFoundError:
+        pass
+
+    try:
+        with open(file_path + '/' + RECENT_ID_FILE_NAME, 'rb') as fp:
+            caches_dict = pickle.load(fp)
+            # recent_id_caches contain a lambda function which can not be pickled
+            for k in caches_dict:
+                for v in caches_dict[k][::-1]:
+                    recent_picture_id_caches[k].add(v)
+
+    except FileNotFoundError:
+        pass
+
+    # try:
+    #     with open(file_path + '/' + PIC_CACHE_FILE_NAME, 'rb') as fp:
+    #         gelbooru_viewer.cache = pickle.load(fp)
+    # except FileNotFoundError:
+    #     pass
+
+
+# start up operation
+load_data()
+seed(time())
 
 
 @atexit.register
-def save_pic_chat_dic():
+def save_data():
     with open(file_path + '/' + PIC_CHAT_DIC_FILE_NAME, 'wb') as fp:
         pickle.dump(picture_chat_id_dic, fp, protocol=2)
+
+    with open(file_path + '/' + RECENT_ID_FILE_NAME, 'wb') as fp:
+        # recent_id_caches contain a lambda function which can not be pickled
+        cache_dict = {k: [*recent_picture_id_caches[k]] for k in recent_picture_id_caches}
+        pickle.dump(cache_dict, fp, protocol=2)
+
+    # with open(file_path + '/' + PIC_CACHE_FILE_NAME, 'wb') as fp:
+    #     pickle.dump(gelbooru_viewer.cache, fp, protocol=2)
 
 
 def raise_exit(signum, stack):
@@ -150,7 +193,15 @@ def send_picture(
     :return: None
     """
     def get_correct_url(url: str):
-        return re.findall(r'((http|https)://.*)', url)[0][0]
+        if url:
+            try:
+                return re.findall(r'((http|https)://.*)', url)[0][0]
+            except Exception as e:
+                logging.error(e)
+                logging.error("wrong url", url)
+                return url
+        else:
+            return url
     # use regular expression in case of wrong url format
     url = get_correct_url(p.sample_url)
 
@@ -174,7 +225,7 @@ def send_picture(
     #     parse_mode=telegram.ParseMode.HTML
     # )
     if use_short_url:
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor:
             view_url = executor.submit(
                 url2short,
                 get_correct_url('https://gelbooru.com/index.php?page=post&s=view&id=' + str(p.picture_id))
@@ -191,24 +242,25 @@ def send_picture(
             p.source, \
             p.file_url, \
             'https://gelbooru.com/index.php?page=post&s=view&id=' + str(p.picture_id)
-    
-    recent_picture_id_caches[chat_id].add(p.picture_id)
-    bot.send_photo(
-        chat_id=chat_id,
-        reply_to_message_id=message_id,
-        # photo=get_img(url),
-        photo=url,
-        caption=PICTURE_INFO_TEXT.format(
-            picture_id=p.picture_id,
-            view_url=view_url,
-            width=p.width,
-            height=p.height,
-            source=source_url,
-            file_url=file_url,
-            rating=p.rating
-        ),
-        reply_markup=ReplyKeyboardRemove()
-    )
+
+    with send_lock:
+        recent_picture_id_caches[chat_id].add(p.picture_id)
+        bot.send_photo(
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            # photo=get_img(url),
+            photo=url,
+            caption=PICTURE_INFO_TEXT.format(
+                picture_id=p.picture_id,
+                view_url=view_url,
+                width=p.width,
+                height=p.height,
+                source=source_url,
+                file_url=file_url,
+                rating=p.rating
+            ),
+            reply_markup=ReplyKeyboardRemove()
+        )
 
 
 def set_command_handler(
@@ -281,11 +333,13 @@ def hello(bot, update):
         chat_id=update.message.chat_id,
         text="""
         My name is Altair, ArchieMeng's partner.
-        My core is shared on https://github.com/ArchieMeng/archie_partner_bot
+Deeply thanks to Gelbooru.
+My core is shared on https://github.com/ArchieMeng/archie_partner_bot
         """
     )
 
 
+# Todo add timeout for this command
 @set_command_handler('img', pass_args=True)
 @run_async
 def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
@@ -377,6 +431,7 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
         send_picture(bot, chat_id, message_id, picture)
 
 
+# Todo add timeout for this command
 @set_command_handler('taxi', pass_args=True)
 @run_async
 def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
