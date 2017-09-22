@@ -350,7 +350,7 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
     if args:
-        # fetch picture_id = args[0] of it is digits
+        # fetch picture_id = args[0] if it is digits
         if args[0].isdigit():
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
             picture = gelbooru_viewer.get(id=args[0])
@@ -448,7 +448,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         return
 
     if args:
-        # fetch picture_id = args[0] of it is digits
+        # fetch picture_id = args[0] if it is digits
         if args[0].isdigit():
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
             picture = gelbooru_viewer.get(id=args[0])
