@@ -15,18 +15,19 @@ import re
 import logging
 from threading import Lock
 from io import BytesIO
-from time import time
+from time import time, sleep
 from requests import get
 from concurrent.futures import ThreadPoolExecutor
+
+from calc import calc
 from recycle_cache import RecycleCache
+from videos_fetcher import get_info, download
 
 # Constants
 PICTURE_INFO_TEXT = """
 id: {picture_id}
 size: {width}*{height}
-source: {source}
 Original url: {file_url}
-rating: {rating}
 view page:{view_url}
 """
 PIC_FORMAT_HTML = """
@@ -210,20 +211,6 @@ def send_picture(
         file_url=url
     ))
 
-    # bot.send_message(
-    #     chat_id=chat_id,
-    #     reply_to_message_id=message_id,
-    #     text=PIC_FORMAT_HTML.format(
-    #         preview_url=url,
-    #         picture_id=p.picture_id,
-    #         width=p.width,
-    #         height=p.height,
-    #         source=p.source,
-    #         file_url=p.file_url,
-    #         rating=p.rating
-    #     ),
-    #     parse_mode=telegram.ParseMode.HTML
-    # )
     if use_short_url:
         with ThreadPoolExecutor(max_workers=5) as executor:
             view_url = executor.submit(
@@ -243,24 +230,21 @@ def send_picture(
             p.file_url, \
             'https://gelbooru.com/index.php?page=post&s=view&id=' + str(p.picture_id)
 
-    with send_lock:
-        recent_picture_id_caches[chat_id].add(p.picture_id)
-        bot.send_photo(
-            chat_id=chat_id,
-            reply_to_message_id=message_id,
-            # photo=get_img(url),
-            photo=url,
-            caption=PICTURE_INFO_TEXT.format(
-                picture_id=p.picture_id,
-                view_url=view_url,
-                width=p.width,
-                height=p.height,
-                source=source_url,
-                file_url=file_url,
-                rating=p.rating
-            ),
-            reply_markup=ReplyKeyboardRemove()
-        )
+    recent_picture_id_caches[chat_id].add(p.picture_id)
+    bot.send_photo(
+        chat_id=chat_id,
+        reply_to_message_id=message_id,
+        # photo=get_img(url),
+        photo=url,
+        caption=PICTURE_INFO_TEXT.format(
+            picture_id=p.picture_id,
+            view_url=view_url,
+            width=p.width,
+            height=p.height,
+            file_url=file_url,
+        ),
+        reply_markup=ReplyKeyboardRemove()
+    )
 
 
 def set_command_handler(
@@ -332,8 +316,9 @@ def hello(bot, update):
     bot.send_message(
         chat_id=update.message.chat_id,
         text="""
-        My name is Altair, ArchieMeng's partner.
-Deeply thanks to Gelbooru.
+My name is Altair, ArchieMeng's partner.
+Using api from Gelbooru.
+Tips: send images with caption set to "tags" to get predicted tags
 My core is shared on https://github.com/ArchieMeng/archie_partner_bot
         """
     )
@@ -350,7 +335,7 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
     if args:
-        # fetch picture_id = args[0] if it is digits
+        # fetch picture_id = args[0] of it is digits
         if args[0].isdigit():
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
             picture = gelbooru_viewer.get(id=args[0])
@@ -369,7 +354,7 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
         # fetch picture_tags = args
         else:
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10, thread_limit=2)
+            pictures = gelbooru_viewer.get_all(tags=args, num=200, limit=10, thread_limit=2)
             if pictures:
                 send = False
                 for pic in pictures:
@@ -448,7 +433,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         return
 
     if args:
-        # fetch picture_id = args[0] if it is digits
+        # fetch picture_id = args[0] of it is digits
         if args[0].isdigit():
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
             picture = gelbooru_viewer.get(id=args[0])
@@ -467,7 +452,7 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
         # fetch picture_tags = args
         else:
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-            pictures = gelbooru_viewer.get_all(tags=args, num=1000, limit=10, thread_limit=1)
+            pictures = gelbooru_viewer.get_all(tags=args, num=200, limit=10, thread_limit=1)
             if pictures:
                 send = False
                 for pic in pictures:
@@ -550,3 +535,72 @@ def tag_id(bot: telegram.Bot, update: telegram.Update, args):
             reply_markup=reply_markups
         )
 
+
+@set_command_handler('you-get', pass_args=True)
+def you_get_download(bot: telegram.Bot, update: telegram.Update, args):
+    # Todo support concurrent programming
+    chat_id = update.message.chat_id
+    message_id = update.message.message_id
+
+    if args:
+        url = args[0]
+        bot.send_chat_action(
+            chat_id=chat_id,
+            action=telegram.ChatAction.UPLOAD_DOCUMENT
+        )
+
+        try:
+            info = download(url)
+            name, ext = info['title'], info['ext']
+        except OSError as e:
+            # handle filename too long
+            if str(e.strerror) == "File name too long":
+                name = "videos"
+                info = get_info(url)
+                ext = info['ext']
+                download(url, output_filename=name)
+            else:
+                # remove downloaded file
+                for file in os.listdir('.'):
+                    if file.endswith("download"):
+                        os.remove(file)
+                raise e
+
+        file_name = name + '.' + ext
+        file_name = os.path.join(file_path, file_name)
+        bot.send_chat_action(
+            chat_id=chat_id,
+            action=telegram.ChatAction.UPLOAD_DOCUMENT
+        )
+
+        with open(file_name, 'rb') as fp:
+            bot.send_document(
+                chat_id=chat_id,
+                reply_to_message_id=message_id,
+                document=fp,
+            )
+        os.remove(file_name)
+    else:
+        bot.send_message(
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            text="You need to provide an url to download!"
+        )
+
+@set_command_handler('calc', pass_args=True)
+@run_async
+def calculate(bot: telegram.Bot, update: telegram.Update, args):
+    cmd = args[0]
+    chat_id = update.message.chat_id
+    message_id = update.message.message_id
+
+    try:
+        result = calc(cmd)
+    except Exception as e:
+        result = e.args[0]
+
+    bot.send_message(
+        chat_id=chat_id,
+        reply_to_message_id=message_id,
+        text=str(result)
+    )
