@@ -1,4 +1,7 @@
+import ctypes
 import os
+from multiprocessing import Process, Manager, Value
+
 import telegram
 from telegram.ext import CommandHandler
 from telegram.ext.dispatcher import run_async
@@ -587,20 +590,47 @@ def you_get_download(bot: telegram.Bot, update: telegram.Update, args):
             text="You need to provide an url to download!"
         )
 
-@set_command_handler('calc', pass_args=True)
+
+def calculate_impl(formula, result: Value):
+    try:
+        result.value = str(calc(formula))
+    except Exception as e:
+        result.value = e.args[0]
+
+
+@set_command_handler('calc', pass_args=True, allow_edited=True)
 @run_async
 def calculate(bot: telegram.Bot, update: telegram.Update, args):
-    cmd = args[0]
-    chat_id = update.message.chat_id
-    message_id = update.message.message_id
 
-    try:
-        result = calc(cmd)
-    except Exception as e:
-        result = e.args[0]
+    calc_timeout = 1.
+    message = update.message or update.edited_message
+    chat_id = message.chat_id
+    message_id = message.message_id
+    if args:
+        formula = ''.join(args)
 
-    bot.send_message(
-        chat_id=chat_id,
-        reply_to_message_id=message_id,
-        text=str(result)
-    )
+        with Manager() as manager:
+            result = manager.Value('s', " ")
+            process = Process(target=calculate_impl, args=(formula, result))
+            process.start()
+            process.join(calc_timeout)
+            if process.is_alive():
+                process.terminate()
+                bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=message_id,
+                    text="Time Limit Exceeded"
+                )
+            else:
+                bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=message_id,
+                    text=result.value
+                )
+    else:
+        bot.send_message(
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            text="Usage: /calc <formula>. Currently, +-*/()^ operator is supported"
+        )
+        pass
