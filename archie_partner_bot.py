@@ -7,6 +7,7 @@ import os
 import sys
 import logging
 
+
 file_path = os.path.dirname(__file__)
 logging.basicConfig(
     filename=file_path + "bot.log",
@@ -16,7 +17,8 @@ logging.basicConfig(
 
 _token_path = os.path.join(file_path, '_token')
 with open(_token_path, 'r') as rf:
-    _token = rf.read()
+    _token = rf.read().replace('\n', '')
+
 updater = Updater(token=_token, workers=16)
 dispatcher = updater.dispatcher
 

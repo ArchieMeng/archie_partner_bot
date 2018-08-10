@@ -25,11 +25,13 @@ from concurrent.futures import ThreadPoolExecutor
 from calc import calc
 from recycle_cache import RecycleCache
 from videos_fetcher import get_info, download
+import redis_dao
 
 # Constants
 PICTURE_INFO_TEXT = """
 id: {picture_id}
 size: {width}*{height}
+rating: {rating}
 Original url: {file_url}
 view page:{view_url}
 """
@@ -45,14 +47,17 @@ file_path = os.path.dirname(__file__)
 PIC_CHAT_DIC_FILE_NAME = 'picture_chat_id.dic'
 RECENT_ID_FILE_NAME = 'recent_id_cache.pickle'
 PIC_CACHE_FILE_NAME = 'picture_cache.pickle'
-SHORT_URL_ADDR = "localhost:1234"
+SHORT_URL_ADDR = "examples.com:1234" # Todo change this to your short url server addr
+SAFE_TAG = "rating:safe"
+REDIS_PORT = 12710
+REDIS_LRU_PORT = 12711
 COMMAND_HANDLERS = [] # list of command_handlers
 
 # global variables
 recent_cache_size = 6
-pic_chat_dic_lock = Lock()
+picture_chat_id_dic = redis_dao.RedisSetDict(port=REDIS_PORT)
+picture_chat_id_dic[0].ping() # start redis server if not started
 gelbooru_viewer = GelbooruViewer()
-picture_chat_id_dic = defaultdict(set)
 send_lock = Lock()
 recent_picture_id_caches = defaultdict(lambda: RecycleCache(recent_cache_size))
 gelbooru_viewer.cache = LRU(gelbooru_viewer.MAX_CACHE_SIZE)
@@ -63,14 +68,7 @@ def load_data():
     load previous global data
     :return: None
     """
-    global picture_chat_id_dic
     global recent_picture_id_caches
-
-    try:
-        with open(file_path + '/' + PIC_CHAT_DIC_FILE_NAME, 'rb') as fp:
-            picture_chat_id_dic = pickle.load(fp)
-    except FileNotFoundError:
-        pass
 
     try:
         with open(file_path + '/' + RECENT_ID_FILE_NAME, 'rb') as fp:
@@ -97,8 +95,8 @@ seed(time())
 
 @atexit.register
 def save_data():
-    with open(file_path + '/' + PIC_CHAT_DIC_FILE_NAME, 'wb') as fp:
-        pickle.dump(picture_chat_id_dic, fp, protocol=2)
+    # with open(file_path + '/' + PIC_CHAT_DIC_FILE_NAME, 'wb') as fp:
+    #     pickle.dump(picture_chat_id_dic, fp, protocol=2)
 
     with open(file_path + '/' + RECENT_ID_FILE_NAME, 'wb') as fp:
         # recent_id_caches contain a lambda function which can not be pickled
@@ -141,7 +139,9 @@ def url2short(url: str):
                     "url": url
                 }
             )
-            if req.status_code != 200:
+            # logging.info("url2short request status code", req.status_code)
+            # logging.info("url2short request content", req.content)
+            if req.status_code >= 400:
                 return url
             else:
                 short_url = req.text
@@ -209,16 +209,16 @@ def send_picture(
     # use regular expression in case of wrong url format
     url = get_correct_url(p.sample_url)
 
-    logging.info("id: {pic_id} - file_url: {file_url}".format(
-        pic_id=p.picture_id,
-        file_url=url
-    ))
+    # logging.info("id: {pic_id} - file_url: {file_url}".format(
+    #     pic_id=p.picture_id,
+    #     file_url=url
+    # ))
 
     if use_short_url:
         with ThreadPoolExecutor(max_workers=5) as executor:
             view_url = executor.submit(
                 url2short,
-                get_correct_url('https://gelbooru.com/index.php?page=post&s=view&id=' + str(p.picture_id))
+                'https://gelbooru.com/index.php?page=post&s=view&id=' + str(p.picture_id)
             )
             source_url = executor.submit(url2short, get_correct_url(p.source))
             file_url = executor.submit(url2short, get_correct_url(p.file_url))
@@ -237,9 +237,9 @@ def send_picture(
     bot.send_photo(
         chat_id=chat_id,
         reply_to_message_id=message_id,
-        # photo=get_img(url),
         photo=url,
         caption=PICTURE_INFO_TEXT.format(
+            rating=p.rating,
             picture_id=p.picture_id,
             view_url=view_url,
             width=p.width,
@@ -327,15 +327,16 @@ My core is shared on https://github.com/ArchieMeng/archie_partner_bot
     )
 
 
-# Todo add timeout for this command
-@set_command_handler('img', pass_args=True)
-@run_async
-def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
+def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args, safe_mode=False):
+    """
+    implement send gelbooru images with args to Telegram chat
+    :param bot: telegram.bot.Bot
+    :param update: telegram.Update
+    :param args: args passed by Telegram Chat
+    :return:
+    """
     chat_id = update.message.chat_id
     message_id = update.message.message_id
-    h_rating = {'e', 'q'}
-
-    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
     if args:
         # fetch picture_id = args[0] of it is digits
@@ -344,107 +345,8 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
             picture = gelbooru_viewer.get(id=args[0])
             if picture:
                 picture = picture[0]
+                picture_chat_id_dic[chat_id].add(picture.picture_id)
                 send_picture(bot, chat_id, message_id, picture)
-                with pic_chat_dic_lock:
-                    picture_chat_id_dic[chat_id].add(picture.picture_id)
-            else:
-                bot.send_message(
-                    chat_id=chat_id,
-                    reply_to_message_id=message_id,
-                    text="id: {picture_id} not found".format(picture_id=args[0])
-                )
-            return
-        # fetch picture_tags = args
-        else:
-            bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-            pictures = gelbooru_viewer.get_all(tags=args, num=200, limit=10, thread_limit=2)
-            if pictures:
-                send = False
-                for pic in pictures:
-                    with pic_chat_dic_lock:
-                        if pic.picture_id not in picture_chat_id_dic[chat_id]:
-                            if pic.rating not in h_rating:
-                                picture_chat_id_dic[chat_id].add(pic.picture_id)
-                                send = True
-                    if send:
-                        send_picture(bot, chat_id, message_id, pic)
-                        return
-                else:
-                    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
-                    for pic in pictures:
-                        if pic.rating not in h_rating:
-                            picture_chat_id_dic[chat_id] = {pic.picture_id}
-                            send_picture(bot, chat_id, message_id, pic)
-                            return
-            else:
-                bot.send_message(
-                    chat_id=chat_id,
-                    reply_to_message_id=message_id,
-                    text="Tag: {tags} not found".format(tags=args)
-                )
-    else:
-        # send random picture
-        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-        picture = gelbooru_viewer.get(limit=1)
-        pic_id = GelbooruViewer.MAX_ID
-        with pic_chat_dic_lock:
-            invalid_or_viewed = not picture\
-                                or picture[0].rating in h_rating \
-                                or picture[0].picture_id in picture_chat_id_dic[chat_id]
-        while invalid_or_viewed:
-            # get a not viewed picture id by offline method
-            viewed = True
-            while viewed:
-                pic_id = randint(1, GelbooruViewer.MAX_ID)
-                with pic_chat_dic_lock:
-                    viewed = pic_id in picture_chat_id_dic[chat_id]
-            # add the pic_id into dictionary.
-            #  If this section is reached that means pic_id not viewed, so just test validation
-            with pic_chat_dic_lock:
-                # in case other thread sent this picture before this thread GET it
-                if pic_id in picture_chat_id_dic[chat_id]:
-                    continue
-                else:
-                    picture_chat_id_dic[chat_id].add(pic_id)
-            picture = gelbooru_viewer.get(id=pic_id)
-            # for we have judged viewed before, we can only judge valid here
-            invalid_or_viewed = not picture or picture[0].rating in h_rating
-            if picture and picture[0].rating in h_rating:
-                with pic_chat_dic_lock:
-                    picture_chat_id_dic[chat_id].remove(pic_id)
-        picture = picture[0]
-        with pic_chat_dic_lock:
-            picture_chat_id_dic[chat_id].add(picture.picture_id)
-        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-        send_picture(bot, chat_id, message_id, picture)
-
-
-# Todo add timeout for this command
-@set_command_handler('taxi', pass_args=True)
-@run_async
-def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
-    chat_id = update.message.chat_id
-    message_id = update.message.message_id
-
-    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
-    if is_public_chat(update):
-        bot.send_message(
-            chat_id=chat_id,
-            reply_to_message_id=message_id,
-            text="Only available in private chat."
-        )
-        return
-
-    if args:
-        # fetch picture_id = args[0] of it is digits
-        if args[0].isdigit():
-            bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-            picture = gelbooru_viewer.get(id=args[0])
-            if picture:
-                picture = picture[0]
-                send_picture(bot, chat_id, message_id, picture)
-                with pic_chat_dic_lock:
-                    picture_chat_id_dic[chat_id].add(picture.picture_id)
             else:
                 bot.send_message(
                     chat_id=chat_id,
@@ -457,23 +359,35 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
             bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
             pictures = gelbooru_viewer.get_all(tags=args, num=200, limit=10, thread_limit=1)
             if pictures:
-                send = False
                 for pic in pictures:
-                    with pic_chat_dic_lock:
-                        if pic.picture_id not in picture_chat_id_dic[chat_id]:
-                            picture_chat_id_dic[chat_id].add(pic.picture_id)
-                            send = True
-                    if send:
+                    if picture_chat_id_dic[chat_id].add(pic.picture_id) == 1:
+                        if safe_mode and pic.rating != 's':
+                            continue
                         send_picture(bot, chat_id, message_id, pic)
                         break
                 else:
                     bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
-                    # fix bug for generator pictures
-                    for picture in pictures:
-                        with pic_chat_dic_lock:
-                            picture_chat_id_dic[chat_id] = {picture.picture_id}
+                    # get picture from redis server
+                    pic_id = picture_chat_id_dic[chat_id].pop()
+                    # get safe picture if safe_mode is True
+                    while pic_id:
+                        picture = gelbooru_viewer.get(id=pic_id)[0]
+                        if not safe_mode or picture.rating == 's':
+                            picture_chat_id_dic[chat_id].add(pic_id)
                             send_picture(bot, chat_id, message_id, picture)
                             break
+                        pic_id = picture_chat_id_dic[chat_id].pop()
+                    picture_chat_id_dic[chat_id].clear()
+                    if pic_id:
+                        picture_chat_id_dic[chat_id].add(pic_id)
+                    else:
+                        # all image is NSFW
+                        bot.send_message(
+                            chat_id=chat_id,
+                            reply_to_message_id=message_id,
+                            text="No image with these tags is SFW"
+                        )
+
             else:
                 bot.send_message(
                     chat_id=chat_id,
@@ -483,32 +397,74 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
     else:
         # send random picture
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
+        # fetch latest picture
         picture = gelbooru_viewer.get(limit=1)
-        pic_id = GelbooruViewer.MAX_ID
-        with pic_chat_dic_lock:
-            invalid_or_viewed = not picture or picture[0].picture_id in picture_chat_id_dic[chat_id]
-        while invalid_or_viewed:
+        while picture and picture_chat_id_dic[chat_id].add(picture[0].picture_id) == 0:
             # get a not viewed picture id by offline method
-            viewed = True
-            while viewed:
+            while True:
                 pic_id = randint(1, GelbooruViewer.MAX_ID)
-                with pic_chat_dic_lock:
-                    viewed = pic_id in picture_chat_id_dic[chat_id]
-            # add the pic_id into dictionary.
-            #  If this section is reached that means pic_id not viewed, so just test validation
-            with pic_chat_dic_lock:
-                # in case other thread sent this picture before this thread GET it
-                if pic_id in picture_chat_id_dic[chat_id]:
-                    continue
-                else:
-                    picture_chat_id_dic[chat_id].add(pic_id)
+                if picture_chat_id_dic[chat_id].add(pic_id) == 1:
+                    break
+
             picture = gelbooru_viewer.get(id=pic_id)
-            invalid_or_viewed = not picture
+            if picture:
+                # picture found, then stop loop
+                break
+
         picture = picture[0]
-        with pic_chat_dic_lock:
-            picture_chat_id_dic[chat_id].add(picture.picture_id)
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         send_picture(bot, chat_id, message_id, picture)
+
+
+@set_command_handler('img', pass_args=True)
+@run_async
+def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args):
+    chat_id = update.message.chat_id
+    message_id = update.message.message_id
+
+    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
+    # Todo correctly implement cache routine
+    if args and args[0].isdigit():
+        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
+        picture = gelbooru_viewer.get(id=args[0])
+        if picture:
+            picture = picture[0]
+            if picture.rating == 'e':
+                bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=message_id,
+                    text="id: {picture_id} is NSFW".format(picture_id=args[0])
+                )
+            else:
+                picture_chat_id_dic[chat_id].add(picture.picture_id)
+                send_picture(bot, chat_id, message_id, picture)
+        else:
+            bot.send_message(
+                chat_id=chat_id,
+                reply_to_message_id=message_id,
+                text="id: {picture_id} not found".format(picture_id=args[0])
+            )
+        return
+    else:
+        send_gelbooru_images(bot, update, args, safe_mode=True)
+
+
+@set_command_handler('taxi', pass_args=True)
+@run_async
+def send_taxi_images(bot: telegram.bot.Bot, update: telegram.Update, args):
+    chat_id = update.message.chat_id
+    message_id = update.message.message_id
+
+    bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
+    if is_public_chat(update):
+        bot.send_message(
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            text="Only available in private chat."
+        )
+        return
+
+    send_gelbooru_images(bot, update, args)
 
 
 @set_command_handler('tag', pass_args=True)
@@ -602,10 +558,21 @@ def calculate_impl(formula, result: Value):
 @run_async
 def calculate(bot: telegram.Bot, update: telegram.Update, args):
 
+    def send_message(text):
+        message = update.message or update.edited_message
+        chat_id = message.chat_id
+        message_id = message.message_id
+        if update.message:
+            bot.send_message(
+                chat_id=chat_id,
+                reply_to_message_id=message_id,
+                text=text
+            )
+        else:
+            # on edited received
+            message.reply_text(text)
+
     calc_timeout = 1.
-    message = update.message or update.edited_message
-    chat_id = message.chat_id
-    message_id = message.message_id
     if args:
         formula = ''.join(args)
 
@@ -616,21 +583,8 @@ def calculate(bot: telegram.Bot, update: telegram.Update, args):
             process.join(calc_timeout)
             if process.is_alive():
                 process.terminate()
-                bot.send_message(
-                    chat_id=chat_id,
-                    reply_to_message_id=message_id,
-                    text="Time Limit Exceeded"
-                )
+                send_message("Time Limit Exceeded")
             else:
-                bot.send_message(
-                    chat_id=chat_id,
-                    reply_to_message_id=message_id,
-                    text=result.value
-                )
+                send_message(result.value)
     else:
-        bot.send_message(
-            chat_id=chat_id,
-            reply_to_message_id=message_id,
-            text="Usage: /calc <formula>. Currently, +-*/()^ operator is supported"
-        )
-        pass
+        send_message("Usage: /calc <formula>. Currently, +-*/()^ operator is supported")
