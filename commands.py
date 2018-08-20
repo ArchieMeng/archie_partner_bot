@@ -47,16 +47,16 @@ file_path = os.path.dirname(__file__)
 PIC_CHAT_DIC_FILE_NAME = 'picture_chat_id.dic'
 RECENT_ID_FILE_NAME = 'recent_id_cache.pickle'
 PIC_CACHE_FILE_NAME = 'picture_cache.pickle'
-SHORT_URL_ADDR = "examples.com:1234" # Todo change this to your short url server addr
+SHORT_URL_ADDR = "localhost"  # Todo change this when push to github
 SAFE_TAG = "rating:safe"
 REDIS_PORT = 12710
 REDIS_LRU_PORT = 12711
-COMMAND_HANDLERS = [] # list of command_handlers
+COMMAND_HANDLERS = []  # list of command_handlers
 
 # global variables
 recent_cache_size = 6
 picture_chat_id_dic = redis_dao.RedisSetDict(port=REDIS_PORT)
-picture_chat_id_dic[0].ping() # start redis server if not started
+picture_chat_id_dic[0].ping()  # start redis server if not started
 gelbooru_viewer = GelbooruViewer()
 send_lock = Lock()
 recent_picture_id_caches = defaultdict(lambda: RecycleCache(recent_cache_size))
@@ -160,7 +160,7 @@ def get_img(url: str):
     file_name = url.split('/')[-1]
     response = get(
         url,
-        headers= {
+        headers={
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US',
             'User-Agent': 'Mozilla/5.0 GelbooruViewer/1.0 (+https://github.com/ArchieMeng/GelbooruViewer)'
@@ -196,6 +196,7 @@ def send_picture(
 
     :return: None
     """
+
     def get_correct_url(url: str):
         if url:
             try:
@@ -206,6 +207,7 @@ def send_picture(
                 return url
         else:
             return url
+
     # use regular expression in case of wrong url format
     url = get_correct_url(p.sample_url)
 
@@ -275,6 +277,7 @@ def set_command_handler(
             )
         )
         return func
+
     return decorate
 
 
@@ -399,17 +402,23 @@ def send_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, args, s
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
         # fetch latest picture
         picture = gelbooru_viewer.get(limit=1)
-        while picture and picture_chat_id_dic[chat_id].add(picture[0].picture_id) == 0:
-            # get a not viewed picture id by offline method
+        if ((not safe_mode) and picture_chat_id_dic[chat_id].add(picture[0].picture_id) == 0) or \
+                (safe_mode and picture[0].rating != 's'):
             while True:
-                pic_id = randint(1, GelbooruViewer.MAX_ID)
-                if picture_chat_id_dic[chat_id].add(pic_id) == 1:
-                    break
+                # get a not viewed picture id by offline method
+                while True:
+                    pic_id = randint(1, GelbooruViewer.MAX_ID)
+                    if picture_chat_id_dic[chat_id].add(pic_id) == 1:
+                        break
 
-            picture = gelbooru_viewer.get(id=pic_id)
-            if picture:
-                # picture found, then stop loop
-                break
+                picture = gelbooru_viewer.get(id=pic_id)
+                if picture:
+                    if (not safe_mode) or picture[0].rating == 's':
+                        # picture found (and SFW if safe_mode is on), then stop loop
+                        break
+                    else:
+                        # give up in the case of NSFW, remove pic_id in set
+                        picture_chat_id_dic[chat_id].remove(pic_id)
 
         picture = picture[0]
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.UPLOAD_PHOTO)
@@ -429,7 +438,7 @@ def send_safe_gelbooru_images(bot: telegram.bot.Bot, update: telegram.Update, ar
         picture = gelbooru_viewer.get(id=args[0])
         if picture:
             picture = picture[0]
-            if picture.rating == 'e':
+            if picture.rating != 's':
                 bot.send_message(
                     chat_id=chat_id,
                     reply_to_message_id=message_id,
@@ -483,7 +492,7 @@ def tag_id(bot: telegram.Bot, update: telegram.Update, args):
     else:
         buttons = [KeyboardButton("id:" + str(pic_id)) for pic_id in recent_picture_id_caches[chat_id]]
         reply_markups = ReplyKeyboardMarkup(
-            [buttons[i:i+3] for i in range(0, len(buttons), 3)],
+            [buttons[i:i + 3] for i in range(0, len(buttons), 3)],
             resize_keyboard=True,
             one_time_keyboard=True
         )
@@ -557,7 +566,6 @@ def calculate_impl(formula, result: Value):
 @set_command_handler('calc', pass_args=True, allow_edited=True)
 @run_async
 def calculate(bot: telegram.Bot, update: telegram.Update, args):
-
     def send_message(text):
         message = update.message or update.edited_message
         chat_id = message.chat_id
