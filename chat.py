@@ -5,7 +5,7 @@ from telegram.ext.dispatcher import run_async
 import filters
 from telegram.ext.filters import Filters
 from pickle import dump
-from commands import send_tags_info
+from gelbooru_commands import send_tags_info
 from io import BytesIO
 from resizeimage.resizeimage import resize_contain as resize
 from PIL import Image

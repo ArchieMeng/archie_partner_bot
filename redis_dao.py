@@ -9,9 +9,10 @@ class RedisDAO:
     """
     Base class of Redis Data Access Object
     """
-    __slots__ = {'conn', 'port', 'host'}
+    __slots__ = {'name', 'conn', 'port', 'host'}
 
-    def __init__(self, host='localhost', port=6379, *args, **kwargs):
+    def __init__(self, name=None, host='localhost', port=6379, *args, **kwargs):
+        self.name = name
         self.host = host
         self.port = port
         self.conn = redis.Redis(host=host, port=port, *args, **kwargs)
@@ -47,19 +48,16 @@ class RedisDAO:
         try:
             return self.conn.ping()
         except redis.exceptions.ConnectionError:
-            p = subprocess.Popen(["setsid", "redis-server", '--bind', self.host, '--port', str(self.port)],
+            subprocess.Popen(["setsid", "redis-server", '--bind', self.host, '--port', str(self.port)],
                              stdout=open(os.devnull, "w"),
                              stderr=subprocess.STDOUT)
             return False
 
 
+# Todo implement NamedRedisDAO, which is the base class of RedisSet and RedisList
+
+
 class RedisSet(RedisDAO):
-    __slots__ = {'name'}
-
-    def __init__(self, key, *args, **kwargs):
-        super(RedisSet, self).__init__(*args, **kwargs)
-        self.name = key
-
     def add(self, value):
         return int(self.conn.sadd(self.name, self.__valueEncode__(value)))
 
@@ -121,11 +119,17 @@ class RedisList(RedisDAO):
     def appendleft(self, item):
         self.conn.lpush(self.name, self.__valueEncode__(item))
 
-    def pop(self):
-        return self.__valueDecode__(self.conn.rpop(self.name))
+    def pop(self, block=False):
+        if block:
+            return self.__valueDecode__(self.conn.brpop(self.name))
+        else:
+            return self.__valueDecode__(self.conn.rpop(self.name))
 
-    def popleft(self):
-        return self.__valueDecode__(self.conn.lpop(self.name))
+    def popleft(self, block=False):
+        if block:
+            return self.__valueDecode__(self.conn.blpop(self.name))
+        else:
+            return self.__valueDecode__(self.conn.lpop(self.name))
 
     def extend(self, iterable):
         for item in iterable:
@@ -138,9 +142,16 @@ class RedisList(RedisDAO):
     def remove(self, item):
         self.conn.lrem(self.name, self.__valueEncode__(item))
 
-    def __getitem__(self, item):
-        if isinstance(item, int):
-            return self.__valueDecode__(self.conn.lindex(self.name, item))
+    def __getitem__(self, key):
+        """
+        [] operator function (step is not supported)
+        :param key: int or slice
+        :return:
+        """
+        if isinstance(key, int):
+            return self.__valueDecode__(self.conn.lindex(self.name, key))
+        elif isinstance(key, slice):
+            return self.__valueDecode__(self.conn.lrange(self.name, key.start, key.stop))
         else:
             raise TypeError("RedisList expect a int index, but type:{} is given".format(str(type(item))))
 
